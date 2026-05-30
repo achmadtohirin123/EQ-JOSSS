@@ -24,27 +24,14 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "bro_eq_josss_db"
                 )
-                .addCallback(AppDatabaseCallback(scope))
+                .addCallback(AppDatabaseCallback(scope, context))
                 .build()
                 INSTANCE = instance
                 instance
             }
         }
-    }
 
-    private class AppDatabaseCallback(
-        private val scope: CoroutineScope
-    ) : RoomDatabase.Callback() {
-        override fun onCreate(db: SupportSQLiteDatabase) {
-            super.onCreate(db)
-            INSTANCE?.let { database ->
-                scope.launch(Dispatchers.IO) {
-                    populateDefaultPresets(database.presetDao())
-                }
-            }
-        }
-
-        private suspend fun populateDefaultPresets(presetDao: PresetDao) {
+        suspend fun populateDefaultPresets(presetDao: PresetDao) {
             // "Rock", "Pop", "Dangdut", "EDM", "Jazz", "Metal", "Hip Hop", "Acoustic", "Gaming", "Movie"
             val defaultPresets = listOf(
                 PresetEntity(
@@ -193,6 +180,23 @@ abstract class AppDatabase : RoomDatabase() {
 
             for (preset in defaultPresets) {
                 presetDao.insertPreset(preset)
+            }
+        }
+    }
+
+    private class AppDatabaseCallback(
+        private val scope: CoroutineScope,
+        private val context: Context
+    ) : RoomDatabase.Callback() {
+        override fun onCreate(db: SupportSQLiteDatabase) {
+            super.onCreate(db)
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val database = getDatabase(context, scope)
+                    populateDefaultPresets(database.presetDao())
+                } catch (e: Throwable) {
+                    // fallbacks
+                }
             }
         }
     }

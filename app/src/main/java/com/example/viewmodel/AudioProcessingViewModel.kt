@@ -12,6 +12,7 @@ import com.example.data.AppDatabase
 import com.example.data.PresetEntity
 import com.example.data.PresetRepository
 import com.example.service.AudioProcessingService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -30,6 +31,15 @@ class AudioProcessingViewModel(application: Application) : AndroidViewModel(appl
 
     init {
         presetRepository = PresetRepository(database.presetDao())
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (database.presetDao().getPresetCount() == 0) {
+                    AppDatabase.populateDefaultPresets(database.presetDao())
+                }
+            } catch (e: Throwable) {
+                // Ignore fallback exceptions
+            }
+        }
         startAndBindService()
     }
 
@@ -160,11 +170,14 @@ class AudioProcessingViewModel(application: Application) : AndroidViewModel(appl
                 launch { boundService.fftSize.collect { _fftSize.value = it } }
                 launch { boundService.visualizerMode.collect { _visualizerMode.value = it } }
 
-                // Apply initial default profile once bound
+                // Apply initial default profile once bound without blocking
                 launch {
-                    val presets = userPresetsList.filter { it.isNotEmpty() }.first()
-                    presets.firstOrNull { it.id == 1 || it.name.contains("Default") || it.name.contains("Flat") }?.let {
-                        applyPreset(it)
+                    userPresetsList.collect { presets ->
+                        if (presets.isNotEmpty() && _currentPresetName.value == "Flat (Default)" && dspService?.activePreset?.value == null) {
+                            presets.firstOrNull { it.id == 1 || it.name.contains("Default") || it.name.contains("Flat") }?.let {
+                                applyPreset(it)
+                            }
+                        }
                     }
                 }
             }
@@ -180,23 +193,11 @@ class AudioProcessingViewModel(application: Application) : AndroidViewModel(appl
         val app = getApplication<Application>()
         val serviceIntent = Intent(app, AudioProcessingService::class.java)
         
-        // Start the service safely, with clean fallbacks
+        // Start the service safely as a standard background service first while in foreground
         try {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                try {
-                    app.startForegroundService(serviceIntent)
-                } catch (e: Throwable) {
-                    try {
-                        app.startService(serviceIntent)
-                    } catch (inner: Throwable) {
-                        // ignore and fall back to bindService below
-                    }
-                }
-            } else {
-                app.startService(serviceIntent)
-            }
+            app.startService(serviceIntent)
         } catch (e: Throwable) {
-            // Proceed to bind service anyway which retains functional bound mode
+            // If background execution restriction is hit, we just rely on bindService below
         }
         
         // Bind to it
@@ -216,22 +217,31 @@ class AudioProcessingViewModel(application: Application) : AndroidViewModel(appl
     }
 
     fun togglePower() {
+        val nextState = !_isEngineActive.value
+        _isEngineActive.value = nextState
         dspService?.toggleEngine()
     }
 
     fun setFaderLeft(value: Float) {
+        _faderLeft.value = value
         dspService?.setFaders(value, _faderRight.value)
     }
 
     fun setFaderRight(value: Float) {
+        _faderRight.value = value
         dspService?.setFaders(_faderLeft.value, value)
     }
 
     fun setStereo(width: Float, mode: String) {
+        _stereoWidth.value = width
+        _stereoMode.value = mode
         dspService?.setStereo(width, mode)
     }
 
     fun applyPreset(preset: PresetEntity) {
+        _currentPresetName.value = preset.name
+        _stereoWidth.value = preset.stereoWidth
+        _stereoMode.value = preset.stereoMode
         dspService?.applyPreset(preset)
     }
 
