@@ -180,18 +180,31 @@ class AudioProcessingViewModel(application: Application) : AndroidViewModel(appl
         val app = getApplication<Application>()
         val serviceIntent = Intent(app, AudioProcessingService::class.java)
         
-        // Start the foreground service
+        // Start the service safely, with clean fallbacks
         try {
-            app.startService(serviceIntent)
-        } catch (e: Exception) {
-            // Android 14 foreground service start warnings fallback
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                app.startForegroundService(serviceIntent)
+                try {
+                    app.startForegroundService(serviceIntent)
+                } catch (e: Throwable) {
+                    try {
+                        app.startService(serviceIntent)
+                    } catch (inner: Throwable) {
+                        // ignore and fall back to bindService below
+                    }
+                }
+            } else {
+                app.startService(serviceIntent)
             }
+        } catch (e: Throwable) {
+            // Proceed to bind service anyway which retains functional bound mode
         }
         
         // Bind to it
-        app.bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
+        try {
+            app.bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
+        } catch (e: Throwable) {
+            // Ignored - system bound failure fallback
+        }
     }
 
     fun setSelectedTab(tab: String) {

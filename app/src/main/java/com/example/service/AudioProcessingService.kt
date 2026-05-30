@@ -119,24 +119,36 @@ class AudioProcessingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        audioManager = getContextAudioManager()
-        detectCurrentDevice()
+        try {
+            audioManager = getContextAudioManager()
+            detectCurrentDevice()
+        } catch (e: Throwable) {
+            Log.e("AudioEngine", "Failed to init AudioManager or detect device: ${e.message}")
+        }
+        
         initializeRealAudioEffects()
         startVisualizerLoop()
         createNotificationChannel()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
+        
+        // Robust foreground service enrollment
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
                     NOTIFICATION_ID, 
                     buildNotification(), 
                     android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
                 )
-            } catch (e: Exception) {
-                // Fallback if media playback type requires extra runtimes or permissions not fully initialized yet
+            } else {
                 startForeground(NOTIFICATION_ID, buildNotification())
             }
-        } else {
-            startForeground(NOTIFICATION_ID, buildNotification())
+        } catch (e: Throwable) {
+            Log.w("AudioEngine", "First FGS start failed: ${e.message}. Attempting classic FGS start.")
+            try {
+                // Classic startForeground fallback
+                startForeground(NOTIFICATION_ID, buildNotification())
+            } catch (innerEx: Throwable) {
+                Log.e("AudioEngine", "Foreground service registration restricted on this OS: ${innerEx.message}")
+            }
         }
     }
 
@@ -199,7 +211,7 @@ class AudioProcessingService : Service() {
                 androidLoudnessEnhancer = LoudnessEnhancer(0).apply { enabled = _isEngineActive.value }
             }
             Log.d("AudioEngine", "Successfully initialized global android audio effects.")
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.w("AudioEngine", "Global effects initialization failed or restricted: ${e.message}. Using high-fidelity local simulator fallback.")
         }
     }
