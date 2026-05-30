@@ -90,7 +90,7 @@ fun HomeScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Image(
-                painter = painterResource(id = com.example.R.drawable.img_app_logo_1780117559050),
+                painter = painterResource(id = com.example.R.drawable.img_app_logo_respect_1780118968224),
                 contentDescription = "App Logo",
                 modifier = Modifier
                     .size(52.dp)
@@ -106,7 +106,7 @@ fun HomeScreen(
                     letterSpacing = 1.5.sp
                 )
                 Text(
-                    text = "PRO AUDIO ENGINE & VISUALIZER",
+                    text = "RESPECT TEAM EDITION • PRO AUDIO",
                     color = Color(0xFF00FFCC),
                     fontWeight = FontWeight.Bold,
                     fontSize = 10.sp,
