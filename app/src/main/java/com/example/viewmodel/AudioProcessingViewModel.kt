@@ -60,6 +60,11 @@ class AudioProcessingViewModel(application: Application) : AndroidViewModel(appl
     private val _currentPresetName = MutableStateFlow("Flat (Default)")
     val currentPresetName = _currentPresetName.asStateFlow()
 
+    private val _activePresetState = MutableStateFlow(PresetEntity(id = 1, name = "Flat (Default)", isSystemPreset = true))
+    val activePresetState = _activePresetState.asStateFlow()
+
+    private var dbSaveJob: kotlinx.coroutines.Job? = null
+
     private val _faderLeft = MutableStateFlow(0f)
     val faderLeft = _faderLeft.asStateFlow()
 
@@ -239,10 +244,35 @@ class AudioProcessingViewModel(application: Application) : AndroidViewModel(appl
     }
 
     fun applyPreset(preset: PresetEntity) {
+        dbSaveJob?.cancel()
         _currentPresetName.value = preset.name
         _stereoWidth.value = preset.stereoWidth
         _stereoMode.value = preset.stereoMode
+        _activePresetState.value = preset
         dspService?.applyPreset(preset)
+    }
+
+    fun updateActivePresetState(updated: PresetEntity) {
+        _activePresetState.value = updated
+        _currentPresetName.value = updated.name
+        _stereoWidth.value = updated.stereoWidth
+        _stereoMode.value = updated.stereoMode
+        dspService?.applyPreset(updated)
+
+        // Debounce saving to Room database to avoid hammering SQLite during drags
+        dbSaveJob?.cancel()
+        dbSaveJob = viewModelScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(350)
+            try {
+                presetRepository.insertPreset(updated)
+            } catch (e: Exception) {
+                // Ignore fallback exceptions
+            }
+        }
+    }
+
+    fun tryStartRealVisualizer() {
+        dspService?.tryStartRealVisualizer()
     }
 
     fun updateEngineSettings(rate: Int, size: Int, latency: Int) {
@@ -255,8 +285,15 @@ class AudioProcessingViewModel(application: Application) : AndroidViewModel(appl
 
     // Preset Actions (Room Database mapping)
     fun saveCustomPreset(preset: PresetEntity) {
-        viewModelScope.launch {
-            presetRepository.insertPreset(preset)
+        _activePresetState.value = preset
+        dbSaveJob?.cancel()
+        dbSaveJob = viewModelScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(350)
+            try {
+                presetRepository.insertPreset(preset)
+            } catch (e: Exception) {
+                // Ignore fallback exceptions
+            }
         }
     }
 

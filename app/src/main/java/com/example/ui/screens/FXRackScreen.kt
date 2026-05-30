@@ -25,9 +25,7 @@ fun FXRackScreen(
     modifier: Modifier = Modifier
 ) {
     var fxActiveSubTab by remember { mutableStateOf("DYNAMIC") } // "DYNAMIC", "SPATIAL", "ENHANCE"
-    val userPresets by viewModel.userPresetsList.collectAsState()
-    val activePresetName by viewModel.currentPresetName.collectAsState()
-    val activePreset = userPresets.firstOrNull { it.name == activePresetName } ?: PresetEntity(name = "Flat (Default)")
+    val activePreset by viewModel.activePresetState.collectAsState()
 
     Column(
         modifier = modifier

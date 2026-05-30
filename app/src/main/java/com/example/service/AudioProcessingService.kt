@@ -113,6 +113,9 @@ class AudioProcessingService : Service() {
     private var audioUpdateJob: Job? = null
     private lateinit var audioManager: AudioManager
 
+    private var realVisualizer: android.media.audiofx.Visualizer? = null
+    private var isRealVisualizerActive = false
+
     inner class LocalBinder : Binder() {
         fun getService(): AudioProcessingService = this@AudioProcessingService
     }
@@ -233,6 +236,11 @@ class AudioProcessingService : Service() {
                     continue
                 }
 
+                if (isRealVisualizerActive) {
+                    // Hardware Visualizer operates in its own listener callbacks, skip simulated synthesis
+                    continue
+                }
+
                 // Wave synthesis logic incorporating EQ, Volume, Stereo Width, and FX parameters
                 val currentPreset = _activePreset.value
                 val size = 64
@@ -347,6 +355,125 @@ class AudioProcessingService : Service() {
 
     private fun Float.pow(n: Float): Float = Math.pow(this.toDouble(), n.toDouble()).toFloat()
 
+    fun tryStartRealVisualizer() {
+        val hasPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+        
+        if (hasPermission && _isEngineActive.value) {
+            startRealVisualizer()
+        } else {
+            stopRealVisualizer()
+        }
+    }
+
+    private fun startRealVisualizer() {
+        if (realVisualizer != null) {
+            try {
+                realVisualizer?.release()
+            } catch (e: Exception) { /* ignore */ }
+            realVisualizer = null
+        }
+        
+        try {
+            // Instantiate hardware capture loop on global session 0.
+            val captSize = 128
+            val visualizer = android.media.audiofx.Visualizer(0).apply {
+                captureSize = captSize
+                setDataCaptureListener(object : android.media.audiofx.Visualizer.OnDataCaptureListener {
+                    override fun onWaveFormDataCapture(v: android.media.audiofx.Visualizer?, waveform: ByteArray?, samplingRate: Int) {
+                        if (waveform != null && _isEngineActive.value) {
+                            processRealWaveform(waveform)
+                        }
+                    }
+
+                    override fun onFftDataCapture(v: android.media.audiofx.Visualizer?, fft: ByteArray?, samplingRate: Int) {
+                        if (fft != null && _isEngineActive.value) {
+                            processRealFFT(fft)
+                        }
+                    }
+                }, android.media.audiofx.Visualizer.getMaxCaptureRate() / 2, true, true)
+                enabled = true
+            }
+            realVisualizer = visualizer
+            isRealVisualizerActive = true
+            Log.d("AudioEngine", "Successfully binder global audio capture session 0.")
+        } catch (e: Exception) {
+            Log.e("AudioEngine", "Failed to start real hardware Visualizer: ${e.message}")
+            isRealVisualizerActive = false
+        }
+    }
+
+    fun stopRealVisualizer() {
+        isRealVisualizerActive = false
+        try {
+            realVisualizer?.enabled = false
+            realVisualizer?.release()
+        } catch (e: Exception) { /* ignore */ }
+        realVisualizer = null
+    }
+
+    private fun processRealWaveform(waveform: ByteArray) {
+        val size = 128
+        val result = FloatArray(size) { 0f }
+        if (waveform.isEmpty()) return
+        val step = (waveform.size / size).coerceAtLeast(1)
+        for (i in 0 until size) {
+            val idx = (i * step).coerceAtMost(waveform.size - 1)
+            val byteVal = waveform[idx].toInt()
+            result[i] = (byteVal / 128f)
+        }
+        _waveData.value = result
+    }
+
+    private fun processRealFFT(fft: ByteArray) {
+        val size = 64
+        val result = FloatArray(size) { 0f }
+        if (fft.isEmpty()) return
+        
+        val halfLen = fft.size / 2
+        val step = (halfLen / size).coerceAtLeast(1)
+        var maxMag = 0.01f
+        for (i in 0 until size) {
+            val baseIdx = (i * step * 2).coerceAtMost(fft.size - 2)
+            if (baseIdx < 2) {
+                result[i] = fft[0].toFloat().absoluteValue / 128f
+            } else {
+                val re = fft[baseIdx].toFloat()
+                val im = fft[baseIdx + 1].toFloat()
+                val mag = kotlin.math.sqrt(re * re + im * im)
+                result[i] = mag / 128f
+            }
+            if (result[i] > maxMag) {
+                maxMag = result[i]
+            }
+        }
+        
+        for (i in 0 until size) {
+            result[i] = (result[i] / maxMag).coerceIn(0f, 1.3f) * 0.75f
+        }
+        _fftData.value = result
+
+        // Set VU meter levels
+        val leftSum = result.take(32).sum() / 32f
+        val rightSum = result.takeLast(32).sum() / 32f
+
+        val faderLeftDb = _faderLeft.value
+        val faderRightDb = _faderRight.value
+
+        val peakLeftDb = (-60f + 72f * leftSum + faderLeftDb).coerceIn(-60f, 12f)
+        val peakRightDb = (-60f + 72f * rightSum + faderRightDb).coerceIn(-60f, 12f)
+
+        _vuLeftPeak.value = peakLeftDb
+        _vuRightPeak.value = peakRightDb
+        _vuLeftRms.value = peakLeftDb - (4f + Random.nextFloat() * 2f)
+        _vuRightRms.value = peakRightDb - (4f + Random.nextFloat() * 2f)
+        _isClippingLeft.value = peakLeftDb > 0f
+        _isClippingRight.value = peakRightDb > 0f
+    }
+
     // Service methods triggered by controller clients
     fun toggleEngine() {
         val newState = !_isEngineActive.value
@@ -357,6 +484,12 @@ class AudioProcessingService : Service() {
         androidVirtualizer?.enabled = newState
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
             androidLoudnessEnhancer?.enabled = newState
+        }
+        
+        if (newState) {
+            tryStartRealVisualizer()
+        } else {
+            stopRealVisualizer()
         }
         updateNotification()
     }
@@ -482,6 +615,7 @@ class AudioProcessingService : Service() {
     }
 
     override fun onDestroy() {
+        stopRealVisualizer()
         audioUpdateJob?.cancel()
         serviceJob.cancel()
         androidEqualizer?.release()

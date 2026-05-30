@@ -27,11 +27,9 @@ fun EqualizerScreen(
     modifier: Modifier = Modifier
 ) {
     var primaryEqTab by remember { mutableStateOf("GRAPHIC") } // "GRAPHIC" or "PARAMETRIC"
-    val userPresets by viewModel.userPresetsList.collectAsState()
 
-    // Retrieve active preset settings
-    val activePresetName by viewModel.currentPresetName.collectAsState()
-    val activePresetRaw = userPresets.firstOrNull { it.name == activePresetName } ?: PresetEntity(name = "Flat (Default)")
+    // Retrieve active preset settings from cache
+    val activePresetRaw by viewModel.activePresetState.collectAsState()
 
     Column(
         modifier = modifier
@@ -161,13 +159,12 @@ fun EqualizerScreen(
                                         val mutableBands = displayBandsList.toMutableList()
                                         mutableBands[idx] = newGain
                                         
-                                        // Save back
+                                        // Save back in-memory instantly
                                         val updatedPreset = activePresetRaw.copy(
                                             eqMode = graphicBandMode,
                                             eqBandsCsv = viewModel.listToBands(mutableBands)
                                         )
-                                        viewModel.saveCustomPreset(updatedPreset)
-                                        viewModel.applyPreset(updatedPreset)
+                                        viewModel.updateActivePresetState(updatedPreset)
                                     },
                                     valueRange = -15f..15f,
                                     modifier = Modifier
@@ -327,8 +324,7 @@ private fun saveAndApplyParametric(
         eqMode = "Parametric",
         parametricBandsCsv = csv
     )
-    viewModel.saveCustomPreset(updated)
-    viewModel.applyPreset(updated)
+    viewModel.updateActivePresetState(updated)
 }
 
 data class ParametricBandItem(

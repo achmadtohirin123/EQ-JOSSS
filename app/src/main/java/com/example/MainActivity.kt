@@ -31,23 +31,19 @@ import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodel.AudioProcessingViewModel
 
 class MainActivity : ComponentActivity() {
+    private var viewModel: AudioProcessingViewModel? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         
-        // Request post notifications permission on Android 13+ inside main onCreate dynamically
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            try {
-                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
-            } catch (e: Exception) {
-                // permission ignored
-            }
-        }
+        requestAudioPermissions()
 
         setContent {
             MyApplicationTheme {
-                val viewModel: AudioProcessingViewModel = viewModel()
-                val selectedTab by viewModel.selectedTab.collectAsState()
+                val vm: AudioProcessingViewModel = viewModel()
+                viewModel = vm
+                val selectedTab by vm.selectedTab.collectAsState()
 
                 Scaffold(
                     modifier = Modifier
@@ -74,7 +70,7 @@ class MainActivity : ComponentActivity() {
                                 val isSelected = selectedTab == item.id
                                 NavigationBarItem(
                                     selected = isSelected,
-                                    onClick = { viewModel.setSelectedTab(item.id) },
+                                    onClick = { vm.setSelectedTab(item.id) },
                                     icon = {
                                         Icon(
                                             imageVector = item.icon,
@@ -107,17 +103,52 @@ class MainActivity : ComponentActivity() {
                             .padding(innerPadding)
                     ) {
                         when (selectedTab) {
-                            "HOME" -> HomeScreen(viewModel = viewModel)
-                            "EQ" -> EqualizerScreen(viewModel = viewModel)
-                            "FX RACK" -> FXRackScreen(viewModel = viewModel)
-                            "PRESETS" -> PresetsScreen(viewModel = viewModel)
-                            "AUTO EQ" -> AutoEqScreen(viewModel = viewModel)
-                            "SETTINGS" -> SettingsScreen(viewModel = viewModel)
+                            "HOME" -> HomeScreen(viewModel = vm)
+                            "EQ" -> EqualizerScreen(viewModel = vm)
+                            "FX RACK" -> FXRackScreen(viewModel = vm)
+                            "PRESETS" -> PresetsScreen(viewModel = vm)
+                            "AUTO EQ" -> AutoEqScreen(viewModel = vm)
+                            "SETTINGS" -> SettingsScreen(viewModel = vm)
                         }
                     }
                 }
             }
         }
+    }
+
+    private fun requestAudioPermissions() {
+        val permissions = mutableListOf<String>()
+        permissions.add(android.Manifest.permission.RECORD_AUDIO)
+        permissions.add(android.Manifest.permission.READ_PHONE_STATE)
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            permissions.add(android.Manifest.permission.BLUETOOTH_CONNECT)
+            permissions.add(android.Manifest.permission.BLUETOOTH_SCAN)
+        } else {
+            @Suppress("DEPRECATION")
+            permissions.add(android.Manifest.permission.BLUETOOTH)
+        }
+        
+        try {
+            requestPermissions(permissions.toTypedArray(), 101)
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 101) {
+            viewModel?.tryStartRealVisualizer()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel?.tryStartRealVisualizer()
     }
 }
 
